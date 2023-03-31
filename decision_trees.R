@@ -5,7 +5,14 @@ library(tidymodels)
 #library(dlookr)
 library(rpart.plot)
 
-df <- read_rds("met_age.rds") %>% select(1:100)
+df <- read_rds("~/Desktop/R/met_age.rds")
+
+df <- df %>% pivot_longer(-Age, names_to = "gene", values_to = "value") %>% 
+  group_by(gene) %>% mutate(v = var(value)) %>% arrange(desc(v)) %>% 
+  mutate(id = row_number(), .before = Age) %>% 
+  select(1:4) %>% 
+  pivot_wider(names_from = "gene", values_from = "value")
+df <- df %>% select(2:2002)
 
 glimpse(diss)
 diagnose_numeric(df) %>% flextable()
@@ -16,15 +23,16 @@ df %>% plot_bar_category(top = 15)
 df %>% plot_bar(by  = "result")
 df %>% plot_boxplot(by = "result")
 df %>% map_dfr(~sum(is.na(.)))
+
 #----------------------------------------------
 set.seed(123)
-df_split <- initial_split(df, strata = s_ha)
+df_split <- initial_split(df, strata = Age)
 df_train <- training(df_split)
 df_test <- testing(df_split)
 
 # The validation set via K-fold cross validation of 5 validation folds
 set.seed(2020)
-folds <- vfold_cv(df_train, strata = s_ha)
+folds <- vfold_cv(df_train, v = 10, strata = Age)
 
 # Recipe
 clean_rec <- recipe(Age ~ ., data = df_train) %>%
@@ -90,9 +98,7 @@ dt_test_results <- dt_wf %>%
 	last_fit(split = df_split, metrics = model_metrics)
 
 dt_results <- dt_test_results %>% collect_metrics()
-dt_results
 
-#DT Results
 dt_results %>%
 	select(-.config, -.estimator) %>%
 	rename(metric = .metric,
@@ -104,13 +110,13 @@ dt_test_results %>%
 	rpart.plot(roundint = FALSE, cex = 0.8)
 
 library(vetiver)
-v <- rf_test_res %>%
+v <- dt_test_results %>%
   extract_workflow() %>%
   vetiver_model("price")
 v
 
-augment(v, slice_sample(df_test, n = 100)) %>%
-  select(Age, .pred)
+augment(v, slice_sample(df_test, n = 50)) %>%
+  select(Age, .pred) %>% View()
 
 library(plumber)
 pr() %>% 

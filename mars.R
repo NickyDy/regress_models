@@ -4,7 +4,14 @@ library(tidymodels)
 #library(DataExplorer)
 #library(dlookr)
 
-df <- read_rds("met_age.rds") %>% select(1:301)
+df <- read_rds("~/Desktop/R/met_age.rds")
+
+df <- df %>% pivot_longer(-Age, names_to = "gene", values_to = "value") %>% 
+  group_by(gene) %>% mutate(v = var(value)) %>% arrange(desc(v)) %>% 
+  mutate(id = row_number(), .before = Age) %>% 
+  select(1:4) %>% 
+  pivot_wider(names_from = "gene", values_from = "value")
+df <- df %>% select(2:2002)
 
 glimpse(df)
 df %>% count(room_type_code, sort = )
@@ -18,16 +25,17 @@ df %>% plot_boxplot(by = "result")
 df %>% map_dfr(~sum(is.na(.)))
 #----------------------------------------------
 set.seed(123)
-df_split <- initial_split(df, strata = Age)
+df_split <- initial_split(df, prop = 0.7, strata = Age)
 df_train <- training(df_split)
 df_test <- testing(df_split)
 
-# The validation set via K-fold cross validation of 5 validation folds
+# V-кратното кръстосано валидиране (известно също като k-кратно кръстосано валидиране) 
+# произволно разделя данните на V (в случая V = 10) групи с приблизително еднакъв размер.
 set.seed(2020)
-folds <- vfold_cv(df_train, strata = Age)
+folds <- vfold_cv(df_train, v = 10, strata = Age)
 
 # Recipe
-clean_rec <- recipe(Age ~ ., data = df_train) %>%
+mars_rec <- recipe(Age ~ ., data = df_train) %>%
   step_zv(all_predictors()) %>% 
   step_nzv(all_predictors()) %>% 
   step_corr(all_predictors()) %>% 
@@ -39,9 +47,12 @@ glimpse(train_prep)
 
 # Control and metrics
 model_control <- control_grid(save_pred = TRUE)
+
+# metric_set() ви позволява да комбинирате множество 
+# метрични функции заедно в нова функция, която изчислява всички наведнъж.
 model_metrics <- metric_set(rmse, rsq)
 
-# Specify MARS-------------------------------------
+# Мултивариационни адаптивни регресионни сплайнове (MARS)
 mars_spec <- 
 	mars(
 		mode = "regression",
@@ -53,7 +64,7 @@ mars_spec <-
 # Workflow
 mars_wf <-
 	workflow() %>%
-	add_recipe(clean_rec) %>% 
+	add_recipe(mars_rec) %>% 
 	add_model(mars_spec)
 
 # Grid
@@ -107,10 +118,10 @@ mars_test_results %>%
 library(vetiver)
 v <- mars_test_results %>%
 	extract_workflow() %>%
-	vetiver_model("price")
+	vetiver_model("met_age")
 v
 
-augment(v, slice_sample(df_test, n = 20)) %>%
+augment(v, slice_sample(df_test, n = 50)) %>%
 	select(Age, .pred) %>% View()
 
 library(plumber)
