@@ -1,12 +1,7 @@
 library(tidyverse)
 library(tidymodels)
 
-df <- read_csv("mdata.csv") %>% janitor::clean_names()
-
-df <- df %>% pivot_longer(2:34, names_to = "locality", values_to = "absorbance") %>% 
-	mutate(locality = str_replace_all(locality, "^local_[:digit:]+", "local"),
-				 locality = str_replace_all(locality, "^nonlocal_[:digit:]+", "nonlocal")) %>% 
-	relocate(locality, .after = absorbance)
+df <- read_csv("islr2/Carseats.csv") %>% janitor::clean_names()
 
 glimpse(df)
 diagnose_numeric(df) %>% flextable()
@@ -19,24 +14,19 @@ df %>% plot_boxplot(by = "result")
 df %>% map_dfr(~sum(is.na(.)))
 #----------------------------------------------
 set.seed(123)
-df_split <- initial_split(df, strata = locality)
+df_split <- initial_split(df, strata = sales)
 df_train <- training(df_split)
 df_test <- testing(df_split)
 
 # The validation set via K-fold cross validation of 5 validation folds
 set.seed(2020)
-folds <- vfold_cv(df_train, v = 5, strata = fcr_metric)
+folds <- vfold_cv(df_train, strata = sales)
 
 # Recipe
-rec <-
-	recipe(fcr_metric ~ ., data = df_train) %>%
-	step_rm(employee_id, employment_month) %>% 
-	step_corr(all_numeric_predictors()) %>% 
-	step_normalize(all_numeric_predictors()) %>% 
-	step_dummy(all_nominal_predictors()) %>% 
-	step_naomit(all_predictors())
+lr_rec <-
+	recipe(sales ~ ., data = df_train) %>%
+	step_dummy(all_nominal_predictors())
 	
-
 train_prep <- rec %>% prep() %>% juice()
 glimpse(train_prep)
 
@@ -44,8 +34,8 @@ glimpse(train_prep)
 model_control <- control_grid(save_pred = TRUE)
 model_metrics <- metric_set(rmse, rsq)
 
-# Specify LOG REG---------------------------------------------
-spec <- 
+# Specify LIN REG---------------------------------------------
+lr_spec <- 
 	linear_reg(
 		mode = "regression", 
 		engine = "glmnet", 
@@ -53,62 +43,71 @@ spec <-
 		mixture = 1)
 
 # Workflow
-wf <- workflow() %>%
-	add_recipe(rec) %>%
-	add_model(title_spec)
+lr_wf <-
+  workflow() %>%
+  add_recipe(lr_rec) %>% 
+  add_model(lr_spec)
 
-reg_grid <- tibble(penalty = 10^seq(-3, -1, length.out = 60))
+# Grid
+lr_grid <- 
+  grid_latin_hypercube(
+    penalty(),
+    size = 15)
 
-# Resampling
+# Tune
 doParallel::registerDoParallel()
-set.seed(123)
-res <- 
-	wf %>% 
-	tune_grid(
-		folds, 
-		grid = reg_grid,
-		control = model_control,
-		metrics = model_metrics)
+set.seed(1234)
+lr_tune <- lr_wf %>%
+  tune_grid(folds,
+            metrics = model_metrics,
+            control = model_control,
+            grid = lr_grid)
 
-autoplot(res)
+# Select best metric
+lr_best <- lr_tune %>% select_best(metric = "rmse")
+autoplot(lr_tune)
 
-show_best(res, metric = "rmse")
+lr_best
 
-select_best(res, desc(penalty), metric = "rmse")
+# Train results
+lr_train_results <- lr_tune %>%
+  filter_parameters(parameters = lr_best) %>%
+  collect_metrics()
+lr_train_results
 
-final <-
-	wf %>%
-	finalize_workflow(select_by_pct_loss(res, desc(penalty), metric = "rmse")) %>%
-	last_fit(df_split)
+# Last fit
+lr_test_results <- lr_wf %>% 
+  finalize_workflow(lr_best) %>%
+  last_fit(split = df_split, metrics = model_metrics)
 
-final
-
-collect_metrics(final)
+lr_results <- lr_test_results %>% collect_metrics()
+lr_results
 
 library(vip)
-final %>%
-	extract_fit_engine() %>%
-	vi()
+lr_test_results %>%
+  extract_fit_engine() %>%
+  vi()
 
-final %>% 
-	pluck(".workflow", 1) %>%
-	extract_fit_parsnip() %>% 
-	vip(geom = "col", num_features = 10, horiz = TRUE, aesthetics = list(size = 4)) +
-	labs(title = "Variable Importance - Linear Regression")
+lr_test_results %>% 
+  pluck(".workflow", 1) %>%
+  extract_fit_parsnip() %>% 
+  vip(geom = "col", num_features = 10, horiz = TRUE, aesthetics = list(size = 4)) +
+  labs(title = "Variable Importance - LR")
 
 library(vetiver)
-v <- final %>%
-	extract_workflow() %>%
-	vetiver_model("price")
+v <- lr_test_results %>%
+  extract_workflow() %>%
+  vetiver_model("met_age")
 v
 
-augment(v, slice_sample(df_test, n = 10))
+augment(v, slice_sample(df_test, n = 10)) %>%
+  select(sales, .pred)
 
 library(plumber)
 pr() %>% 
-	vetiver_api(v) %>% 
-	pr_run()
+  vetiver_api(v) %>% 
+  pr_run()
 
 pr() %>% 
-	vetiver_api(v, type = "prob") %>% 
-	pr_run()
+  vetiver_api(v, type = "prob") %>% 
+  pr_run()
