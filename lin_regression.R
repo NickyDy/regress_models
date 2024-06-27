@@ -1,7 +1,7 @@
 library(tidyverse)
 library(tidymodels)
 
-df <- read_csv("islr2/Carseats.csv") %>% janitor::clean_names()
+df <- read_rds("~/Desktop/R/data.rds") %>% janitor::clean_names() %>% select(-treating_physician)
 
 glimpse(df)
 diagnose_numeric(df) %>% flextable()
@@ -11,23 +11,25 @@ plot_correlate(df)
 df %>% plot_bar_category(top = 15)
 df %>% plot_bar(by  = "result")
 df %>% plot_boxplot(by = "result")
-df %>% map_dfr(~sum(is.na(.)))
+df %>% map_dfr(~sum(is.na(.))) %>% view
+df %>% count(treating_physician)
 #----------------------------------------------
 set.seed(123)
-df_split <- initial_split(df, strata = sales)
+df_split <- initial_split(df, strata = sum_of_payments_for_treatment)
 df_train <- training(df_split)
 df_test <- testing(df_split)
 
 # The validation set via K-fold cross validation of 5 validation folds
 set.seed(2020)
-folds <- vfold_cv(df_train, strata = sales)
+folds <- vfold_cv(df_train, strata = sum_of_payments_for_treatment)
 
 # Recipe
 lr_rec <-
-	recipe(sales ~ ., data = df_train) %>%
+	recipe(sum_of_payments_for_treatment ~ ., data = df_train) %>%
+  step_impute_bag(us_census_bureau_division) %>% 
 	step_dummy(all_nominal_predictors())
 	
-train_prep <- rec %>% prep() %>% juice()
+train_prep <- lr_rec %>% prep() %>% juice()
 glimpse(train_prep)
 
 # Control and metrics
@@ -64,7 +66,8 @@ lr_tune <- lr_wf %>%
             grid = lr_grid)
 
 # Select best metric
-lr_best <- lr_tune %>% select_best(metric = "rmse")
+lr_best <- lr_tune %>% 
+  select_best(metric = "rmse")
 autoplot(lr_tune)
 
 lr_best
@@ -101,7 +104,7 @@ v <- lr_test_results %>%
 v
 
 augment(v, slice_sample(df_test, n = 10)) %>%
-  select(sales, .pred)
+  select(sum_of_payments_for_treatment, .pred)
 
 library(plumber)
 pr() %>% 

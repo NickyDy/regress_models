@@ -4,16 +4,16 @@ library(tidymodels)
 #library(DataExplorer)
 #library(dlookr)
 
-df <- read_rds("~/Desktop/R/met_age.rds")
+df <- read_rds("~/Desktop/R/data.rds") %>% janitor::clean_names()
 
 df <- df %>% pivot_longer(-Age, names_to = "gene", values_to = "value") %>% 
   group_by(gene) %>% mutate(v = var(value)) %>% arrange(desc(v)) %>% 
   mutate(id = row_number(), .before = Age) %>% 
   select(1:4) %>% 
   pivot_wider(names_from = "gene", values_from = "value")
-df <- df %>% select(2:2002)
+df <- data %>% slice_sample(n = 1000)
 
-glimpse(diss)
+glimpse(df)
 diagnose_numeric(df) %>% flextable()
 plot_intro(df)
 plot_histogram(df)
@@ -22,24 +22,23 @@ df %>% plot_bar_category(top = 15)
 df %>% plot_bar(by  = "result")
 df %>% plot_boxplot(by = "result")
 df %>% map_dfr(~sum(is.na(.)))
-
 #----------------------------------------------
 set.seed(123)
-df_split <- initial_split(df, strata = Age)
+df_split <- initial_split(df, strata = sum_of_payments_for_treatment)
 df_train <- training(df_split)
 df_test <- testing(df_split)
 
 # The validation set via K-fold cross validation of 10 validation folds
 set.seed(2020)
-folds <- vfold_cv(df_train, v = 10, strata = Age)
+folds <- vfold_cv(df_train, v = 10, strata = sum_of_payments_for_treatment)
 
 # Recipe
-clean_rec <- recipe(Age ~ ., data = df_train) %>%
-	step_zv(all_predictors()) %>% 
-  step_nzv(all_predictors()) %>% 
-  step_corr(all_predictors()) %>% 
-  step_log(base = exp(1), all_predictors()) %>% 
-  step_normalize(all_predictors())
+clean_rec <- recipe(sum_of_payments_for_treatment ~ ., data = df_train)# %>%
+# 	step_zv(all_predictors()) %>% 
+#   step_nzv(all_predictors()) %>% 
+#   step_corr(all_predictors()) %>% 
+#   step_log(base = exp(1), all_predictors()) %>% 
+#   step_normalize(all_predictors())
   
 train_prep <- clean_rec %>% prep() %>% juice()
 glimpse(train_prep)
